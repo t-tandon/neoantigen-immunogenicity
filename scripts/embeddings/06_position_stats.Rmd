@@ -1,0 +1,218 @@
+---
+title: "R Notebook"
+output: word_document
+---
+
+```{r}
+#load packages
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+```
+
+```{r}
+#load 
+df <- read_csv("../../output/final_embeds/analysis_df.csv")
+head(df)
+```
+```{r}
+#make label ordered factor
+df$label <- ifelse(df$label == 1, "immunogenic", "non-immunogenic")
+df$label <- factor(df$label,
+                        levels = c("non-immunogenic", "immunogenic"))
+df$model <- factor(df$model, levels = c("ESM-2", "ProtTrans"))
+head(df)
+```
+
+### POSITION ANALYSIS
+```{r}
+#does position affect immunogenicity?
+print(table(df$mut_pos))
+```
+
+```{r}
+pos_table <- table(df$label, df$mut_pos)
+print(pos_table)
+```
+#chisq test
+```{r}
+#does mutpos differ between imm/nonimm? 
+chisq_pos <- chisq.test(pos_table)
+print(chisq_pos)
+```
+- position is not random wt imm  
+
+```{r}
+#position strat analysis
+#compare each pos separately
+pos_analysis <- df %>% group_by(model, mut_pos) %>% 
+  summarise(n_total = n(), n_imm = sum(label=="immunogenic"), prop_imm = n_imm/n_total, .groups="drop") %>% arrange(model, mut_pos)
+print(pos_analysis, n=30)
+```
+- 4-5 is 0.25
+- 6 is 0.34 highest of all = most immunogenic 
+- 10-11 is 0.25 to 0.15 == maybe due to length confound (exists only in longest pep)
+
+```{r}
+#reshape to long for analysis
+#prottrans has no bos, so abs_sum_bos can be dropped 
+
+long <- df %>% pivot_longer(cols=c(abs_sum_bos, abs_sum_eos, abs_sum_mutpos, mean_abs_allpos), names_to="criteria", values_to="value") %>% filter(!is.na(value))
+head(long)
+```
+
+#wilcox test
+#not independent
+```{r}
+#test each pos for non/imm difference
+pos_wilcox <- long %>% group_by(model, criteria, mut_pos) %>% wilcox_test(value ~ label) %>% adjust_pvalue(method="BH") %>% ungroup()
+print(pos_wilcox, n=100)
+```
+so strength does NOT differ between imm/nonimm at any specific position 
+
+#logistic regression
+```{r}
+#does position predict imm? 
+#test for each model differently 
+
+df_esm2 <- df %>% filter(model == "ESM-2")
+  
+#change to numeric for logreg
+df_esm2$imm_numeric <- as.numeric(df_esm2$label) - 1 #0 nonimm, 1=imm
+  
+#fit logreg
+glm_esm2 <- glm(imm_numeric ~ mut_pos, data=df_esm2, family="binomial")
+print(summary(glm_esm2))
+```
+```{r}
+#calculate odds ratio 
+odds_ratio_esm2 <- exp(coef(glm_esm2)["mut_pos"])
+print(round(odds_ratio_esm2),4)
+```
+
+```{r}
+#does position predict imm? 
+#test for each model differently 
+
+df_prot <- df %>% filter(model == "ProtTrans")
+  
+#change to numeric for logreg
+df_prot$imm_numeric <- as.numeric(df_prot$label) - 1 #0 nonimm, 1=imm
+  
+#fit logreg
+glm_prot <- glm(imm_numeric ~ mut_pos, data=df_prot, family="binomial")
+print(summary(glm_prot))
+```
+```{r}
+#calculate odds ratio 
+odds_ratio_prot <- exp(coef(glm_prot)["mut_pos"])
+print(round(odds_ratio_prot),4)
+```
+
+- almost identical logreg output 
+- stat sig but not large effect
+position explains very little imm 
+
+#GRAPHS
+```{r}
+#prop imm by position 
+pos_prop <- df %>% group_by(mut_pos) %>% summarise(
+  n_total = n() / 2, n_imm = sum(label=="immunogenic") /2, 
+  prop_imm = n_imm/n_total, 
+  se = sqrt(prop_imm * (1-prop_imm) / n_total)
+)
+ggplot(pos_prop, aes(x = factor(mut_pos), y = prop_imm)) + geom_col(fill = "steelblue") + geom_errorbar(aes(ymin = prop_imm - se, ymax = prop_imm + se)) + geom_hline(yintercept = mean(pos_prop$prop_imm), linetype = "dashed", color = "grey") + labs(x = "Mutation position", y = "Proportion immunogenic") + theme_classic()
+```
+
+```{r}
+#imm/nonimm by pos
+pos_count <- df %>% filter(model == "ESM-2") %>%   # drop one model since counts are identical
+  group_by(mut_pos, label) %>% summarise(count = n(), .groups = "drop")
+
+ggplot(pos_count, aes(x = factor(mut_pos), y = count, fill = label)) + geom_col() + labs(x = "mutation position", y = "count", fill = NULL) + theme_classic() 
+```
+
+#length 11 has very few immunogenic
+#likely fewer long peptides
+#control for length
+```{r}
+glm_length_esm2 <- glm(imm_numeric ~ mut_pos + mt_length, data=df_esm2, family="binomial")
+summary(glm_length_esm2)
+```
+
+```{r}
+glm_length_prot <- glm(imm_numeric ~ mut_pos + mt_length, data=df_prot, family="binomial")
+summary(glm_length_prot)
+```
+LENGTH MORE SIGNIFICANT, CONFOUNDED PREVIOUS RESULT 
+
+```{r}
+#does interaction add anything?
+anova_esm2 <- anova(glm_esm2, glm_length_esm2, test="Chisq")
+print(anova_esm2)
+```
+```{r}
+anova_prot <- anova(glm_prot, glm_length_prot, test="Chisq")
+print(anova_prot)
+```
+YES EXPLAINS MUCH MORE THAN OTHER MODEL
+
+#treat position as categorical with length
+```{r}
+#esm2 first
+df_esm2$mut_pos_f <- factor(df_esm2$mut_pos)
+glm_cat_esm2 <- glm(imm_numeric ~ mut_pos_f + mt_length, data=df_esm2, family="binomial")
+summary(glm_cat_esm2)
+```
+
+
+```{r}
+#esm2 first
+df_prot$mut_pos_f <- factor(df_prot$mut_pos)
+glm_cat_prot <- glm(imm_numeric ~ mut_pos_f + mt_length, data=df_prot, family="binomial")
+summary(glm_cat_prot)
+```
+POS 4 AND 5 LOWER ODDS OF IMM 
+POS 6 HAS SLIGHTLY HIGHER ODDS
+
+
+#WHICH POS DRIVES CHISQ 
+```{r}
+#test one pos vs all others combined
+pos <- sort(unique(df$mut_pos))
+
+#results table
+results <- data.frame(mut_pos=pos, p_fisher=NA_real_)
+
+#loop over pos
+for (i in seq_along(pos)) {
+  p <- pos[i]
+  #is it pos
+  is_pos <- df$mut_pos == p
+  tab <- table(df$label, is_pos) 
+  results$p_fisher[i] <- fisher.test(tab)$p.value
+}
+
+#adj for comparision
+results$p_adj <- p.adjust(results$p_fisher, method="BH")
+print(results)
+```
+#fisher's by position
+```{r}
+ggplot(results, aes(x = factor(mut_pos), y = -log10(p_adj))) +
+  geom_col(fill = "steelblue", alpha = 0.8) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "red") +
+  labs(x = "Mutation position", y = "-log10(adjusted p-value)",
+       caption = "Dashed line = p.adj 0.05") +
+  theme_classic()
+```
+
+```{r}
+#wilcox pvalue heatmap across pos and features
+pos_wilcox_clean <- pos_wilcox %>% mutate(criteria = recode(criteria, 
+                                                            "abs_sum_bos" = "BOS token", "abs_sum_eos" = "EOS token", "abs_sum_mutpos" = "Mutated residue", "mean_abs_allpos" = "Mean positions"))
+
+#heatmap of length stratified 
+ggplot(pos_wilcox_clean, aes(x = factor(mut_pos), y=criteria, fill = p.adj)) + geom_tile(color="white") + geom_text(aes(label=round(p.adj, 2)), size=2) + facet_wrap(~model) + scale_fill_gradient(low="white", high="steelblue") + labs(x="mutation position", y = NULL, fill="p.adj") + theme_minimal()
+```
+
