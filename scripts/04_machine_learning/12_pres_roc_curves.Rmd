@@ -1,0 +1,87 @@
+---
+title: "+ presentation roc curces"
+---
+
+```{r}
+#setup
+library(tidyverse)
+library(ggpubr)
+library(viridis)
+```
+
+```{r}
+#load files
+roc <- read.csv("../../output/roc_curves_pres.csv")
+head(roc)
+```
+```{r}
+#auc summaries also
+auc <- bind_rows(
+  read_csv("../../output/01_lasso_pres/lasso_esm2_pres.csv") %>% mutate(source="ESM2_LASSO"), 
+  read_csv("../../output/01_lasso_pres/lasso_prot_pres.csv") %>% mutate(source="Prot_LASSO"),
+  read_csv("../../output/01_rf_pres/esm2_rf_pres.csv") %>% mutate(source="ESM2_RF"),
+  read_csv("../../output/01_rf_pres/prot_rf_pres.csv") %>% mutate(source="Prot_RF"), 
+)
+```
+```{r}
+#inspect
+unique(roc$source)
+unique(roc$feature_set)
+unique(roc$dataset)
+```
+#figure 1
+
+```{r}
+roc_split <- roc %>%separate(source, into = c("plm", "model"), sep = "_")
+head(roc_split)
+```
+
+```{r}
+#roc curves
+roc_esm2_plot <- roc_split %>% filter(dataset=="full") %>% filter(plm == "ESM2") 
+head(roc_esm2_plot)
+```
+
+```{r}
+ggplot(roc_esm2_plot, aes(fpr, tpr, colour=feature_set)) + geom_line() + geom_abline(slope=1, intercept=0, linetype="dashed") + coord_equal() + facet_wrap(~model, ncol=2) + theme_pubclean() + theme(axis.text.x = element_text(angle=35, hjust=1)) + theme(legend.position = "bottom") + labs(x= "False positive rate", y = "True positive rate", colour="") 
+```
+
+```{r}
+#roc curves
+roc_prot_plot <- roc_split %>% filter(dataset=="full") %>% filter(plm == "Prot") 
+
+ggplot(roc_prot_plot, aes(fpr, tpr, colour=feature_set)) + geom_line() + geom_abline(slope=1, intercept=0, linetype="dashed") + coord_equal() + facet_wrap(~model, ncol=2) + theme_pubclean() + theme(axis.text.x = element_text(angle=35, hjust=1)) + theme(legend.position = "bottom") + labs(x= "False positive rate", y = "True positive rate", colour="") 
+```
+
+
+
+#figure 2
+```{r, fig.width = 10, fig.height = 8}
+#roc-auc heatmap
+ggplot(auc, aes(source, feature_set, fill=roc_auc_mean)) + geom_tile() + geom_text(aes(label=sprintf("%.3f", roc_auc_mean)), size=3) + scale_fill_distiller(palette = "Blues", direction = 1) +  theme_pubclean() + theme(axis.text.x = element_text(angle=35, hjust=1)) + theme(legend.position = "bottom") + labs(x="", y="", fill="ROC-AUC")
+```
+#figure 3
+```{r}
+#effect of adding roc information 
+
+comparision <- auc %>% 
+  filter(feature_set != "presentation_only") %>% 
+  mutate(base_feature = str_remove(feature_set, "_pres"),
+         presentation = ifelse(str_detect(feature_set,"_pres"), "with presentation", "embedding only"))
+
+ggplot(comparision, aes(presentation, roc_auc_mean, colour=source, group=source)) + geom_point() + geom_line() + facet_wrap(~base_feature) + theme_pubr() + theme(legend.position = "bottom") + labs(x="", y="ROC-AUC", colour="")
+```
+
+```{r}
+binom.test(
+  x = 14,
+  n = 14,
+  p = 0.5,
+  alternative = "greater"
+)
+```
+
+
+
+
+

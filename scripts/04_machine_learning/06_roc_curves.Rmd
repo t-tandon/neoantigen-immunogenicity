@@ -1,0 +1,93 @@
+---
+title: "roc_curves"
+---
+
+```{r}
+library(tidyverse)
+library(ggpubr)
+library(viridis)
+```
+
+```{r}
+#load files
+#load file
+roc <- read.csv("../../output/roc_curves.csv")
+head(roc)
+```
+
+
+```{r}
+print(unique(roc$source))
+print(unique(roc$dataset))
+print(unique(roc$feature_set))
+```
+
+#figure 1
+```{r}
+roc_split <- roc %>%separate(source, into = c("plm", "model"), sep = "_")
+head(roc_split)
+```
+
+
+```{r, fig.width = 10, fig.height = 8}
+#plot
+library(ggplot2)
+
+roc_esm2 <- roc_split %>% filter(plm == "ESM2")
+
+ggplot(roc_esm2, aes(x=fpr, y=tpr, colour = paste(model, feature_set))) + geom_line() + geom_abline(slope=1, intercept=0, linetype="dashed") + facet_grid(model ~ dataset) + coord_equal() + theme_pubclean() + theme(legend.position = "bottom") + labs(x="False positive rate", y="True positive rate", colour="Feature")
+```
+
+```{r, fig.width = 10, fig.height = 8}
+roc_prot <- roc_split %>% filter(plm == "Prot")
+
+ggplot(roc_prot, aes(x=fpr, y=tpr, colour = paste(model, feature_set))) + geom_line() + geom_abline(slope=1, intercept=0, linetype="dashed") + facet_grid(model ~ dataset) + coord_equal() + theme_pubclean() + theme(legend.position = "bottom") + labs(x="False positive rate", y="True positive rate", colour="Feature")
+```
+
+
+#figure 2
+```{r}
+#auc summaries also
+auc <- bind_rows(
+  read_csv("../../output/00_lasso/lasso_ESM2.csv") %>% mutate(source="ESM2_LASSO"), 
+  read_csv("../../output/00_lasso/lasso_ProtTrans.csv") %>% mutate(source="Prot_LASSO"),
+  read_csv("../../output/00_rf/esm2_rf.csv") %>% mutate(source="ESM2_RF"),
+  read_csv("../../output/00_rf/prot_rf.csv") %>% mutate(source="Prot_RF"), 
+)
+head(auc)
+```
+
+```{r}
+#heatmap
+ggplot(auc, aes(source, feature_set, fill=roc_auc_mean)) + geom_tile() + geom_text(aes(label=sprintf("%.3f", roc_auc_mean)), size=3) + facet_wrap(~dataset) + scale_fill_distiller(palette = "Blues", direction = 1) + theme_pubclean() + theme(axis.text.x = element_text(angle=35, hjust=1)) + theme(legend.position = "bottom")
+```
+#supplementary figures
+```{r}
+full_roc <- roc %>% filter(dataset=="full")
+ggplot(full_roc, aes(fpr, tpr, colour=source)) + geom_line() + facet_wrap(~feature_set) + geom_abline(slope=1, intercept = 0, linetype= "dashed") + coord_equal() + theme_pubr() + theme(axis.text.x = element_text(angle=35, hjust=1)) 
+```
+```{r}
+#just 9mers
+mer9_roc <- roc %>% filter(dataset=="9mer")
+
+ggplot(mer9_roc, aes(fpr, tpr, colour=source)) + geom_line() + facet_wrap(~feature_set) + geom_abline(slope=1, intercept = 0, linetype= "dashed") + coord_equal() + theme_pubr() + theme(axis.text.x = element_text(angle=35, hjust=1)) 
+
+```
+```{r}
+filter_roc <- roc %>% filter(dataset=="9mer_HLA_A02")
+
+ggplot(filter_roc, aes(fpr, tpr, colour=source)) + geom_line() + facet_wrap(~feature_set) + geom_abline(slope=1, intercept = 0, linetype= "dashed") + coord_equal() + theme_pubr() + theme(axis.text.x = element_text(angle=35, hjust=1)) 
+```
+
+#dataset restriction effect
+```{r}
+effect_df <- auc %>% filter(feature_set %in% c("confound_baseline", "substitution_baseline",
+      "diff_mutpos", "diff_mean")) %>% filter(!is.na(roc_auc_mean))
+
+
+ggplot(effect_df, aes(dataset, roc_auc_mean, colour=feature_set, group=feature_set)) + geom_line() + geom_point() + theme_pubr() + labs(y = "ROC-AUC", x="", colour="Feature")
+```
+
+
+
+
